@@ -1,0 +1,16 @@
+# Linter configuration
+lint:
+  # Disable specific rules by name
+  ignore:
+    - slice-missing-event
+    - command-without-event
+
+# Diagram generation configuration
+diagram:
+  # Override CSS custom properties for element colors
+  css:
+    --trigger-color: "#FFD700"
+    --command-color: "#87CEEB"
+    --event-color: "#FFA500"
+    --exception-color: "#FF6347"
+    --view-color: "#90EE90"
