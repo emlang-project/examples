@@ -1,6 +1,9 @@
 # Pizza delivery system
 
-# Customer places an order
+# Customer builds and places an order
+# Omitted: item quantity (add same item multiple times instead),
+#   menu/item validation, minimum order amount, order cancellation,
+#   removing an item not in the order
 slices:
   Add item:
     steps:
@@ -145,12 +148,10 @@ slices:
                 - pepperoni-pizza/18.99
                 - cheese-pizza/14.99
               total: 33.98
----
-# Customer finalizes and pays
-slices:
+
   Set delivery details:
     steps:
-      - t: Website / Delivery form
+      - t: Website / Order
       - c: Set delivery details
       - e: Order / Delivery details set
       - v: Order summary
@@ -222,13 +223,13 @@ slices:
         then:
           - x: Desired time outside delivery hours
 
-  Initiate payment:
+  Place order:
     steps:
-      - t: Website / Payment form
-      - c: Initiate payment
+      - t: Website / Order
+      - c: Place order
       - e: Order / Payment requested
     tests:
-      Payment initiated:
+      Order placed:
         given:
           - e: Order / Order started
             props:
@@ -244,15 +245,16 @@ slices:
               email: "joe@example.com"
               desired time: "18:00"
         when:
-          - c: Initiate payment
+          - c: Place order
             props:
               order id: order-123
         then:
           - e: Order / Payment requested
             props:
               order id: order-123
+              total: 18.99
 
-      Cannot pay empty order:
+      Cannot place empty order:
         given:
           - e: Order / Order started
             props:
@@ -264,13 +266,13 @@ slices:
               email: "joe@example.com"
               desired time: "18:00"
         when:
-          - c: Initiate payment
+          - c: Place order
             props:
               order id: order-123
         then:
           - x: Order must have items
 
-      Cannot pay without delivery details:
+      Cannot place order without delivery details:
         given:
           - e: Order / Order started
             props:
@@ -280,12 +282,16 @@ slices:
               order id: order-123
               item id: pepperoni-pizza
         when:
-          - c: Initiate payment
+          - c: Place order
             props:
               order id: order-123
         then:
           - x: Delivery details required
+---
+# Payment and confirmation
+# Omitted: payment failure/decline, payment timeout/expiry, refunds
 
+slices:
   # Processor slice: triggered by payment gateway webhook
   Confirm payment:
     steps:
@@ -299,6 +305,7 @@ slices:
           - e: Order / Payment requested
             props:
               order id: order-123
+              total: 18.99
         when:
           - c: Confirm payment
             props:
@@ -307,12 +314,47 @@ slices:
           - e: Order / Payment confirmed
             props:
               order id: order-123
+              total: 18.99
+              confirmation number: "CON-78901"
           - v: Order confirmation
             props:
               order id: order-123
+              confirmation number: "CON-78901"
 
-# Document 3: Preparation and delivery
+  # Processor slice: triggered by payment confirmation
+  Send confirmation email:
+    steps:
+      - e: Order / Payment confirmed
+      - t: Email service / Send
+      - c: Send confirmation email
+      - e: Order / Confirmation email sent
+    tests:
+      Confirmation email sent:
+        given:
+          - e: Order / Payment confirmed
+            props:
+              order id: order-123
+              confirmation number: "CON-78901"
+          - e: Order / Delivery details set
+            props:
+              order id: order-123
+              email: "joe@example.com"
+        when:
+          - c: Send confirmation email
+            props:
+              order id: order-123
+        then:
+          - e: Order / Confirmation email sent
+            props:
+              order id: order-123
+              email: "joe@example.com"
+              confirmation number: "CON-78901"
+
 ---
+# Preparation
+# Omitted: preparation time estimation, order cancellation during preparation,
+#   out-of-stock ingredients
+
 slices:
   # Processor slice: scheduler triggers preparation at the right time before desired delivery
   Start preparation:
@@ -340,19 +382,98 @@ slices:
             props:
               order id: order-123
 
-  Assign driver:
+  Mark order ready:
     steps:
       - v: Kitchen dashboard
-      - t: Kitchen / Assign driver form
+      - t: Kitchen / Order ready form
+      - c: Mark order ready
+      - e: Kitchen / Order ready
+      - v: Kitchen dashboard
+    tests:
+      Order marked as ready:
+        given:
+          - e: Kitchen / Preparation started
+            props:
+              order id: order-123
+        when:
+          - c: Mark order ready
+            props:
+              order id: order-123
+        then:
+          - e: Kitchen / Order ready
+            props:
+              order id: order-123
+
+---
+# Delivery
+# Omitted: driver registration/login, real-time tracking, customer rating,
+#   delivery failure (customer absent, wrong address), order status view
+
+slices:
+  Track available drivers:
+    steps:
+      - v: Available drivers
+    tests:
+      All drivers available:
+        given: # No deliveries in progress
+        then:
+          - v: Available drivers
+            props:
+              drivers:
+                - driver-456
+                - driver-789
+
+      Driver busy:
+        given:
+          - e: Delivery / Driver assigned
+            props:
+              order id: order-123
+              driver id: driver-456
+        then:
+          - v: Available drivers
+            props:
+              drivers:
+                - driver-789
+
+      Driver available again:
+        given:
+          - e: Delivery / Driver assigned
+            props:
+              order id: order-123
+              driver id: driver-456
+          - e: Delivery / Order delivered
+            props:
+              order id: order-123
+        then:
+          - v: Available drivers
+            props:
+              drivers:
+                - driver-456
+                - driver-789
+
+  # Processor slice: automated dispatcher assigns driver when order is ready
+  Assign driver:
+    steps:
+      - e: Kitchen / Order ready
+      - v: Available drivers
+      - t: Dispatcher / Auto assign
       - c: Assign driver
       - e: Delivery / Driver assigned
       - v: Driver dashboard
     tests:
       Driver assigned to order:
         given:
-          - e: Kitchen / Preparation started
+          - e: Kitchen / Order ready
             props:
               order id: order-123
+          - e: Delivery / Driver assigned
+            props:
+              order id: order-456
+              driver id: driver-789
+          - v: Available drivers
+            props:
+              drivers:
+                - driver-456
         when:
           - c: Assign driver
             props:
@@ -363,26 +484,72 @@ slices:
             props:
               order id: order-123
               driver id: driver-456
+          - v: Available drivers
+            props:
+              drivers: # No drivers available
 
-      No driver available:
+  Pick up order:
+    steps:
+      - v: Driver dashboard
+      - t: Driver app / Pick up
+      - c: Pick up order
+      - e: Delivery / Order picked up
+    tests:
+      Driver picks up order:
+        given:
+          - e: Delivery / Driver assigned
+            props:
+              order id: order-123
+              driver id: driver-456
         when:
-          - c: Assign driver
+          - c: Pick up order
+            props:
+              order id: order-123
+              driver id: driver-456
+        then:
+          - e: Delivery / Order picked up
+            props:
+              order id: order-123
+              driver id: driver-456
+
+  # Processor slice: SMS sent when driver picks up the order
+  Notify client of pickup:
+    steps:
+      - e: Delivery / Order picked up
+      - t: SMS service / Send
+      - c: Notify client of pickup
+      - e: Delivery / Client notified
+    tests:
+      Client notified by SMS:
+        given:
+          - e: Delivery / Order picked up
+            props:
+              order id: order-123
+          - e: Order / Delivery details set
+            props:
+              order id: order-123
+              phone number: "418-555-1234"
+        when:
+          - c: Notify client of pickup
             props:
               order id: order-123
         then:
-          - x: No driver available
+          - e: Delivery / Client notified
+            props:
+              order id: order-123
+              phone number: "418-555-1234"
 
   Mark delivered:
     steps:
       - v: Driver dashboard
-      - t: Driver app / Delivery form
+      - t: Driver app / Confirm delivery
       - c: Mark delivered
       - e: Delivery / Order delivered
       - v: Order status
     tests:
       Driver marks order as delivered:
         given:
-          - e: Delivery / Driver assigned
+          - e: Delivery / Order picked up
             props:
               order id: order-123
               driver id: driver-456
@@ -398,8 +565,7 @@ slices:
 
   Confirm reception:
     steps:
-      - v: Order status
-      - t: Website / Reception form
+      - t: Driver app / Reception form
       - c: Confirm reception
       - e: Order / Reception confirmed
       - v: Order status
